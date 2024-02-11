@@ -1,4 +1,4 @@
-import { ChangeEvent, useState } from "react";
+import { ChangeEvent, useEffect, useState } from "react";
 
 import { Avatar, Button, List, Modal, Space } from "antd";
 import Search from "antd/es/input/Search";
@@ -17,7 +17,7 @@ export default function UserSelect(props: UserSelectProps) {
     const [loading, setLoading] = useState(false);
 
     const onSearch = (search: string) => {
-        if (search) {
+        if (search != null) {
             setLoading(true);
             apiPostRequest("similarUsernames", { username: search })
             .then(res => res.json()).then(data => {
@@ -29,6 +29,10 @@ export default function UserSelect(props: UserSelectProps) {
         }
     }
 
+    useEffect(() => {
+        onSearch("");
+    }, []);
+    
     return (
         <Modal open onCancel={onClose} title="Add Friends" okButtonProps={{
             style: {
