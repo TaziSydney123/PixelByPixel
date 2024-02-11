@@ -28,6 +28,7 @@ export default function Login(props: LoginProps) {
             console.log(data);
         
             localStorage.setItem("token", data.token);
+            localStorage.setItem("username", values.username);
 
             onSuccess();
         } else {

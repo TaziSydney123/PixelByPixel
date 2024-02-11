@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { ChangeEvent, useEffect, useState } from "react";
 
-import { Flex, List, Avatar, Button } from "antd";
-import { UserAddOutlined, CaretRightFilled, BuildOutlined } from "@ant-design/icons";
+import { Flex, List, Avatar, Button, ConfigProvider, Divider, Input, Typography } from "antd";
+import { UserAddOutlined, CaretRightFilled, BuildOutlined, SearchOutlined } from "@ant-design/icons";
 
 import { Link, useNavigate } from "react-router-dom";
 
@@ -9,10 +9,14 @@ import UserSelect from "../../components/FindUsers";
 import { User, UserStatus } from "../../types/User";
 import { apiPostRequest } from "../../network";
 
+const { Search } = Input;
+
 export default function Home() {
     const [foundUsers, setFoundUsers] = useState<User[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
     const [addUserModalOpen, setAddUserModalOpen] = useState<boolean>(false);
+    const [searchOpen, setSearchOpen] = useState<boolean>(false);
+    const [search, setSearch] = useState<string>("");
 
     const navigate = useNavigate();
 
@@ -41,46 +45,69 @@ export default function Home() {
         navigate("/canvas/" + username);
     }
 
+    const noFriendsFound = () => (
+        <div style={{ textAlign: 'center' }}>
+            <p>No friends found! Add someone to start a new canvas!</p>
+        </div>
+    );
+
     return (
         <Flex justify="center" align="center" vertical style={{width: "100%"}}>
             {addUserModalOpen && (
                 <UserSelect onClose={() => setAddUserModalOpen(false)} onSelected={addUser}/>
             )}
-            <Flex justify="left" align="center">
-                <Button type="text" onClick={() => setAddUserModalOpen(true)}>
+            <Flex justify="space-between" align="center" style={{width: "95%", marginTop: 8}}>
+                {searchOpen ? (
+                    <Search style={{width: "50%", marginLeft: 15}} autoFocus 
+                    onChange={(event: ChangeEvent<HTMLInputElement>) => setSearch(event.target.value)} 
+                    onBlur={() => {
+                        setSearchOpen(false);
+                        setSearch("");
+                    }} />
+                ) : (
+                    <Button shape="circle" onClick={() => setSearchOpen(true)} icon={
+                        <SearchOutlined style={{fontSize: 24}}/>
+                    } style={{width: 40, height: 40}} />
+                )}
+                <Typography style={{fontSize: 20}}>Canvases</Typography>
+                <Button shape="circle" onClick={() => setAddUserModalOpen(true)} icon={
                     <UserAddOutlined style={{fontSize: 24}}/>
-                </Button>
+                } style={{width: 40, height: 40}} />
             </Flex> 
 
-            <List
-                dataSource={foundUsers}
-                loading={loading}
-                style={{ width: "95%" }}
-                renderItem={(user) => (
-                    <Link to={`/canvas/${user.username}`}>
-                        <List.Item>
-                            <List.Item.Meta
-                                avatar={<Avatar src={`https://ui-avatars.com/api/?name=${user.username}`} />}
-                                title={user.username}
-                                description={(() => {
-                                    console.log();
-                                    switch (user.status) {
-                                        case UserStatus.WAITING_CONTACT:
-                                            return (
-                                                <span><CaretRightFilled /> Delivered</span>
-                                            );
+            <ConfigProvider renderEmpty={noFriendsFound}>
+                <List
+                    dataSource={foundUsers.filter(user => user.username.toLowerCase().includes(search.toLowerCase()))}
+                    loading={loading}
+                    style={{ width: "95%" }}
+                    renderItem={(user) => (
+                        <>
+                            <Link to={`/canvas/${user.username}`}>
+                                <List.Item>
+                                    <List.Item.Meta
+                                        avatar={<Avatar src={`https://ui-avatars.com/api/?name=${user.username}`} />}
+                                        title={user.username}
+                                        description={(() => {
+                                            switch (user.status) {
+                                                case UserStatus.WAITING_CONTACT:
+                                                    return (
+                                                        <span><CaretRightFilled /> Delivered</span>
+                                                    );
 
-                                        case UserStatus.WAITING_SELF:
-                                            return (
-                                                <span style={{ "color": "#ff0000", "fontWeight": "bold" }}><BuildOutlined /> Your Turn!</span>
-                                            );
-                                    }
-                                })() }
-                            />
-                        </List.Item>
-                    </Link>
-                )}
-            />
+                                                case UserStatus.WAITING_SELF:
+                                                    return (
+                                                        <span style={{ "color": "#00cc00", "fontWeight": "bold" }}><BuildOutlined /> Your Turn!</span>
+                                                    );
+                                            }
+                                        })() }
+                                    />
+                                </List.Item>
+                            </Link>
+                            <Divider style={{margin: 1}} />
+                        </>
+                    )}
+                />
+            </ConfigProvider>
         </Flex>
     )
 }

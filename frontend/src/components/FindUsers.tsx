@@ -21,7 +21,7 @@ export default function UserSelect(props: UserSelectProps) {
             setLoading(true);
             apiPostRequest("similarUsernames", { username: search })
             .then(res => res.json()).then(data => {
-                setFoundUsers(data.usernames);
+                setFoundUsers(data.usernames.filter((name: string) => name != localStorage.getItem("username")));
                 setLoading(false);
             });
         } else {

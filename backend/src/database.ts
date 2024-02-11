@@ -1,97 +1,99 @@
-import DatabaseConstructor, { Database } from "better-sqlite3";
+import { PrismaClient } from '@prisma/client'
 import { randomUUID } from 'crypto';
-const db = new DatabaseConstructor('fubar.db', /*{ verbose: console.log }*/);
+
+const prisma = new PrismaClient({
+    datasourceUrl: 'postgresql://main:password@localhost:5432/pixelbypixel',
+    // log: ['query', 'info', 'warn', 'error']
+});
 
 const canvasSize = 10;
 const colorSubstringSize = 7;
 const defaultCanvasColor = "#FFFFFF";
 
-db.exec(`CREATE TABLE IF NOT EXISTS users (
-    username TEXT PRIMARY KEY,
-    password TEXT
-);`);
-
-db.exec(`CREATE TABLE IF NOT EXISTS tokens (
-    token TEXT PRIMARY KEY,
-    username TEXT,
-    FOREIGN KEY (username) REFERENCES users(username)
-);`);
-
-db.exec(`CREATE TABLE IF NOT EXISTS canvases (
-    id TEXT PRIMARY KEY,
-    username_one TEXT,
-    username_two TEXT,
-    canvas TEXT,
-    waiting_on TEXT,
-    FOREIGN KEY (username_one) REFERENCES users(username),
-    FOREIGN KEY (username_two) REFERENCES users(username)
-);`);
-
-export function getContacts(username: string) {
-    const stmt = db.prepare('SELECT * FROM canvases WHERE username_one = ? OR username_two = ?;');
-    const result = stmt.all(username, username);
-
-    const contacts: {
-        username: string,
-        status: string
-    }[] = [];
-    
-    result.map((res) => (res as unknown as { username_one: string, username_two: string , waiting_on: string})).forEach(canvas => {
-        if (canvas.username_one != username) {
-            contacts.push({
-                username: canvas.username_one,
-                status: canvas.waiting_on == username ? "WAITING_SELF" : "WAITING_CONTACT"
-            });
-        } else {
-            contacts.push({
-                username: canvas.username_two,
-                status: (canvas.waiting_on == username ? "WAITING_SELF" : "WAITING_CONTACT")
-            });   
+export async function getContacts(username: string) {
+    const canvases = await prisma.canvas.findMany({
+        where: {
+            users: {
+                some: {
+                    username: username
+                }
+            }
+        },
+        include: {
+            turn: true,
+            users: true
         }
     });
 
-    return contacts;
+    console.log(canvases.map(canvas => canvas.users));
+
+    return canvases.map(canvas => ({
+        username: canvas.users.find(user => user.username != username)?.username,
+        status: canvas.turnUsername == username ? "WAITING_SELF" : "WAITING_CONTACT"
+    }));
 }
 
-export function getTurn(username: string, contact: string) {
-    const stmt = db.prepare('SELECT waiting_on FROM canvases WHERE username_one = ? AND username_two = ?;');
-    const result = stmt.get(username, contact);
-    const resultFromContact = stmt.get(contact, username);
-    
-    const localWaitingOn = (result as unknown as { waiting_on: string})?.waiting_on;
-    const contactWaitingOn = (resultFromContact as unknown as { waiting_on: string})?.waiting_on;
+export async function getTurn(username: string, contact: string) {
+    const canvas = await prisma.canvas.findFirst({
+        where: {
+            AND: [
+                {
+                    users: {
+                        some: {
+                            username: username
+                        }
+                    }
+                },
+                {
+                    users: {
+                        some: {
+                            username: contact
+                        }
+                    }
+                }
+            ]
+        },
+        include: {
+            turn: true
+        }
+    });
 
-    if (result) {
-        return localWaitingOn == username ? "WAITING_SELF" : "WAITING_CONTACT";
-    } else if (resultFromContact) {
-        return contactWaitingOn == username ? "WAITING_SELF" : "WAITING_CONTACT";
-    } else {
-        return null;
+    if (canvas) {
+        return canvas.turnUsername == username ? "WAITING_SELF" : "WAITING_CONTACT";
     }
+
+    return null;
 }
 
-function userExists(username: string): boolean {
-    const existsResult = db.prepare("SELECT EXISTS(SELECT 1 FROM users WHERE username = ?);")
-        .get(username) as unknown as { [key: string]: number };
-    const exists = Object.values(existsResult)[0] == 1;
-    return exists;
+async function userExists(username: string): Promise<boolean> {
+    return (await prisma.user.count({
+        where: {
+            "username": username
+        }
+    }) > 0);
 }
 
-function canvasExists(usernameOne: string, usernameTwo: string, pure: boolean = false): boolean {
-    const existsResult = db.prepare("SELECT * FROM canvases WHERE username_one = ? AND username_two = ?;")
-        .get(usernameOne, usernameTwo);
-    if (existsResult) {
-        return true;
-    }
-    if (pure) {
-        return false;
-    }
-    const existsResultTwo = db.prepare("SELECT * FROM canvases WHERE username_one = ? AND username_two = ?;")
-        .get(usernameTwo, usernameOne);
-    if (existsResultTwo) {
-        return true;
-    }
-    return false;
+async function canvasExists(usernameOne: string, usernameTwo: string): Promise<boolean> {
+    return (await prisma.canvas.count({
+        where: {
+            AND: [
+                {
+                    users: {
+                        some: {
+                            username: usernameOne
+                        }
+                    }
+                },
+                {
+                    users: {
+                        some: {
+                            username: usernameTwo
+                        }
+                    }
+                }
+            ]
+        }
+    })) > 0;
 }
 
 function canvasToDatabaseRepresentation(canvas: string[][]): string {
@@ -104,19 +106,36 @@ function canvasToDatabaseRepresentation(canvas: string[][]): string {
     return final;
 }
 
-export function getCanvas(usernameOne: string, usernameTwo: string): string[][] | null {
-    if (!canvasExists(usernameOne, usernameTwo)) {
+export async function getCanvas(usernameOne: string, usernameTwo: string): Promise<string[][] | null> {
+    if (!await canvasExists(usernameOne, usernameTwo)) {
         return null;
     }
     
-    let canvasResult = db.prepare("SELECT canvas FROM canvases WHERE username_one = ? AND username_two = ?;")
-        .get(usernameOne, usernameTwo) as unknown as { canvas: string };
-    
-    if (!canvasResult) {
-        canvasResult = db.prepare("SELECT canvas FROM canvases WHERE username_one = ? AND username_two = ?;")
-        .get(usernameTwo, usernameOne) as unknown as { canvas: string };
+    let canvasContent = (await prisma.canvas.findFirst({
+        where: {
+            AND: [
+                {
+                    users: {
+                        some: {
+                            username: usernameOne
+                        }
+                    }
+                },
+                {
+                    users: {
+                        some: {
+                            username: usernameTwo
+                        }
+                    }
+                }
+            ]
+        }
+    }))?.content;
+
+    if (!canvasContent) {
+        return null;
     }
-    
+
     const canvas = new Array(canvasSize);
     for (let i = 0; i < canvasSize; i++) {
         canvas[i] = new Array(canvasSize);
@@ -124,7 +143,8 @@ export function getCanvas(usernameOne: string, usernameTwo: string): string[][] 
             canvas[i][k] = "";
         }
     }
-    const image = canvasResult.canvas.replaceAll('#', '');
+
+    const image = canvasContent.replaceAll('#', '');
 
     for (let i = 0; i < canvasSize * canvasSize; i++) {
         const color = image.substring(i * 6, (i + 1) * 6);
@@ -134,87 +154,171 @@ export function getCanvas(usernameOne: string, usernameTwo: string): string[][] 
         canvas[y][x] = '#' + color;
     }
 
-
-
-    // let index = 0;
-    // for (let pixel of image) {
-    //     canvas[Math.floor(index / canvasSize)][index % canvasSize] = pixel;
-    //     index++;
-    // }
-
     return canvas;
 }
 
-export function writePixel(usernameOne: string, usernameTwo: string, pixelX: number, pixelY: number, color: string, usernameOneIsFinishedUsername: boolean = true): boolean {
+async function createCanvasAndWritePixel(usernameOne: string, usernameTwo: string, pixelX: number, pixelY: number, color: string, usernameOneIsFinishedUsername: boolean = true) {
     const newUserWaitingOn = usernameOneIsFinishedUsername ? usernameTwo : usernameOne;
+    const canvasPixels: string[][] = new Array(canvasSize);
+    for (let i = 0; i < canvasSize; i++) {
+        canvasPixels[i] = new Array(canvasSize);
+        for (let k = 0; k < canvasSize; k++) {
+            canvasPixels[i][k] = defaultCanvasColor;
+        }
+    }
+    canvasPixels[pixelX][pixelY] = color;
+    console.log(usernameOne, " and ", usernameTwo, " made a canvas with waiting for ", newUserWaitingOn);
 
-    if (!canvasExists(usernameOne, usernameTwo)) {
-        const canvas: string[][] = new Array(canvasSize);
-        for (let i = 0; i < canvasSize; i++) {
-            canvas[i] = new Array(canvasSize);
-            for (let k = 0; k < canvasSize; k++) {
-                canvas[i][k] = defaultCanvasColor;
+    const users = await prisma.user.findMany({
+        where: {
+            username: {
+                in: [usernameOne, usernameTwo]
             }
         }
-        canvas[pixelX][pixelY] = color;
-        console.log(usernameOne, " and ", usernameTwo, " made a canvas with waiting for ", newUserWaitingOn);
-        const createCanvasStmt = db.prepare("INSERT INTO canvases (id, username_one, username_two, canvas, waiting_on) VALUES (?, ?, ?, ?, ?);");
-        createCanvasStmt.run(randomUUID().toString(), usernameOne, usernameTwo, canvasToDatabaseRepresentation(canvas), newUserWaitingOn);
+    });
+
+    console.log(users);
+
+    const turnUser = users.find(user => user.username == newUserWaitingOn);
+
+    const r = await prisma.canvas.create({
+        data: {
+            id: randomUUID(),
+            users: {
+                connect: users.map(user => ({ username: user.username })),
+            },
+            content: canvasToDatabaseRepresentation(canvasPixels),
+            turn: {
+                connect: turnUser,
+            }
+        }
+    });
+
+    console.log(r);
+}
+
+export async function writePixel(usernameOne: string, usernameTwo: string, pixelX: number, pixelY: number, color: string, usernameOneIsFinishedUsername: boolean = true): Promise<boolean> {
+    const newUserWaitingOn = usernameOneIsFinishedUsername ? usernameTwo : usernameOne;
+
+    if (!await canvasExists(usernameOne, usernameTwo)) {
+        console.log('Canvas doesn\'t exist');
+        console.log(usernameOne, usernameTwo);
+        await createCanvasAndWritePixel(usernameOne, usernameTwo, pixelX, pixelY, color, usernameOneIsFinishedUsername);
         return true;
-    } else if (canvasExists(usernameTwo, usernameOne, true)) {
-        const temp = usernameOne;
-        usernameOne = usernameTwo;
-        usernameTwo = temp;
     }
 
-    const canvas = getCanvas(usernameOne, usernameTwo);
+    console.log('Canvas exists');
 
-    if (canvas == null) {
+    const canvas = await getCanvas(usernameOne, usernameTwo);
+
+    if (canvas === null) {
         return false;
     }
     
     canvas[pixelX][pixelY] = color;
 
-    const stmt = db.prepare("UPDATE canvases SET canvas = ?, waiting_on = ? WHERE username_one = ? AND username_two = ?;");
-    stmt.run(canvasToDatabaseRepresentation(canvas), newUserWaitingOn, usernameOne, usernameTwo);
+    await updateCanvas(canvas, usernameOne, usernameTwo, newUserWaitingOn);
+    
     return true;
 }
 
-export function makeUser(username: string, password: string) {
-    const stmt = db.prepare("INSERT INTO users (username, password) VALUES (?, ?);");
-    if (userExists(username)) {
-        // We have the user, check their password
-        const checkUserPasswordStmt = db.prepare(`SELECT password FROM users WHERE username=(?);`);
-        const savedPassword = (checkUserPasswordStmt.get(username) as unknown as { password: string })?.password;
+async function updateCanvas(canvas: string[][], usernameOne: string, usernameTwo: string, newUserWaitingOn: string) {
+    await prisma.canvas.updateMany({
+        where: {
+            AND: [
+                {
+                    users: {
+                        some: {
+                            username: usernameOne
+                        }
+                    },
+                },
+                {
+                    users: {
+                        some: {
+                            username: usernameTwo
+                        }
+                    },
+                }
+            ]
+        },
+        data: {
+            content: canvasToDatabaseRepresentation(canvas),
+            turnUsername: newUserWaitingOn
+        }
+    });
+}
+
+export async function signInOrSignUp(username: string, password: string) {
+    if (await userExists(username)) {
+        const savedPassword = (await prisma.user.findFirst({
+            where: {
+                username: username
+            }
+        }))?.password;
         
         if (password == savedPassword) {
-            return createUserToken(username);
+            return await createUserToken(username);
         }
 
         return "";
     }
-    stmt.run(username, password);
-    return createUserToken(username);
+
+    await prisma.user.create({
+        data: {
+            username: username,
+            password: password
+        }
+    });
+    
+    return await createUserToken(username);
 }
 
-export function similarUsernames(username: string) {
-    const stmt = db.prepare(`SELECT username FROM users WHERE username LIKE ?;`);
-    const usernames = (stmt.all(`%${username}%`) as unknown as { username: string }[]).map(row => row.username);
-    return usernames;
+export async function similarUsernames(username: string) {
+    const users = (await prisma.user.findMany({
+        where: {
+            username: {
+                contains: username,
+                mode: "insensitive"
+            }
+        }
+    }))
+    
+    return users.map(user => user.username);    
 }
 
-function createUserToken(username: string) {
-    const stmt = db.prepare("INSERT INTO tokens (token, username) VALUES (?, ?);");
+async function createUserToken(username: string) {
     const token = randomUUID();
-    stmt.run(token, username);
+    await prisma.token.create({
+        data: {
+            id: token,
+            user: {
+                connect: {
+                    username: username
+                }
+            },
+        }
+    });
     return token;
 }
 
-export function getUsernameFromToken(token: string) {
-    const stmt = db.prepare(`SELECT username FROM tokens WHERE token = ?;`);
-    return (stmt.get(token) as unknown as { username: string })?.username;
+export async function getUsernameFromToken(token: string): Promise<string> {
+    console.log(token);
+
+    return (await prisma.user.findFirst({
+        where: {
+            tokens: {
+                some: {
+                    id: token
+                }
+            }
+        },
+        include: {
+            tokens: true
+        }
+    }))?.username ?? "";
 }
 
-export function closeDatabase() {
-    db.close();
+export async function closeDatabase() {
+    await prisma.$disconnect();
 }
