@@ -1,0 +1,50 @@
+:root {
+    --pixel-size: 64px;
+}
+
+.grid {
+    width: min-content;
+    height: min-content;
+    margin: auto;
+
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+
+    border: 2px solid #000;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.row {
+    display: flex;
+    justify-content: center;
+}
+
+.pixel {
+    width: var(--pixel-size);
+    height: var(--pixel-size);
+    transition: background 0.15s ease;
+    position: relative;
+}
+
+.pixel:hover {
+    cursor: pointer;
+}
+
+.colorSelectGrid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 2px;
+}
+
+.colorSelectGridColor {
+    width: 48px;
+    height: 48px;
+    border-radius: 4px;
+}
+
+.colorSelectGridColor:hover {
+    cursor: pointer;
+}
