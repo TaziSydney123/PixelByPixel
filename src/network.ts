@@ -3,7 +3,7 @@ export async function apiPostRequest(endpoint: string, body: any) {
         ...body,
         token: localStorage.getItem("token") ?? ""
     })
-    return fetch("https://02e1bbb2-3787-4288-b170-ba378f39d7fa-00-34qdesqhukk3.kirk.replit.dev/" + endpoint, {
+    return fetch("https://b87200fb-79c4-4af1-93b1-a175cf8c9f08-00-48nypzvf2h08.janeway.replit.dev/" + endpoint, {
         method: "POST",
         headers: {
             'Content-Type': 'application/json'
